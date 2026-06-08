@@ -1,0 +1,21 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!terraform.tfvars.example
+
+# Java
+target/
+*.class
+*.jar
+
+# Segredos
+*.pem
+.env
+*.env
+
+# IDE
+.idea/
+*.iml

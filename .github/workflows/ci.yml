@@ -70,8 +70,19 @@ jobs:
             --name "/shop/dev/ssh-private-key" \
             --with-decryption \
             --query "Parameter.Value" \
-            --output text > ~/.ssh/shop-dev-key.pem
+            --output text \
+            --region eu-central-1 > ~/.ssh/shop-dev-key.pem
           chmod 600 ~/.ssh/shop-dev-key.pem
+          # Debug: verificar que a chave tem conteúdo
+          wc -l ~/.ssh/shop-dev-key.pem
+          head -1 ~/.ssh/shop-dev-key.pem
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/shop-dev-key.pem \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            ec2-user@52.28.90.66 "echo SSH OK"
 
       - name: Run Ansible playbook
         run: |

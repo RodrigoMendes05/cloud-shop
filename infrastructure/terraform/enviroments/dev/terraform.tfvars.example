@@ -1,0 +1,4 @@
+aws_region  = "eu-central-1"
+project     = "shop"
+environment = "dev"
+db_password = "<password>"

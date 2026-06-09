@@ -20,5 +20,8 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
+      - name: List buckets
+        run: aws s3api list-buckets --query "Buckets[].Name" --output text
+
       - name: Verify DynamoDB lock table exists
-        run: aws dynamodb describe-table --table-name shop-tf-locks --region eu-central-1
+        run: aws dynamodb describe-table --table-name shop-tf-locks --region eu-central-1 --query "Table.TableStatus"

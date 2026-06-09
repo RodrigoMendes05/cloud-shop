@@ -7,7 +7,6 @@ module "ec2_gateway" {
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_web_id
-  key_name          = "shop-dev-key"
   service_name      = "gateway"
 }
 
@@ -20,7 +19,6 @@ module "ec2_user" {
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
-  key_name          = "shop-dev-key"
   service_name      = "user"
 }
 
@@ -33,7 +31,6 @@ module "ec2_product" {
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
-  key_name          = "shop-dev-key"
   service_name      = "product"
 }
 
@@ -46,6 +43,5 @@ module "ec2_order" {
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
-  key_name          = "shop-dev-key"
   service_name      = "order"
 }

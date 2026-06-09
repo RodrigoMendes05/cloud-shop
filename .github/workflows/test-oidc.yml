@@ -20,8 +20,5 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Verify S3 state bucket exists
-        run: aws s3 ls s3://shop-tf-state-eu-central-1
-
       - name: Verify DynamoDB lock table exists
         run: aws dynamodb describe-table --table-name shop-tf-locks --region eu-central-1

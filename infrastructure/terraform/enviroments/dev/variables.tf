@@ -20,3 +20,6 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+variable "ami_id" {
+  type    = string
+}

@@ -8,6 +8,7 @@ module "ec2_gateway" {
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_web_id
   service_name      = "gateway"
+  ami_id   = var.ami_id
 }
 
 # EC2 para o user-service (subnet privada)
@@ -20,6 +21,7 @@ module "ec2_user" {
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
   service_name      = "user"
+  ami_id   = var.ami_id
 }
 
 # EC2 para o product-service (subnet privada)
@@ -32,6 +34,7 @@ module "ec2_product" {
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
   service_name      = "product"
+  ami_id   = var.ami_id
 }
 
 # EC2 para o order-service (subnet privada)
@@ -44,4 +47,5 @@ module "ec2_order" {
   subnet_id         = module.vpc.public_subnet_ids[0]
   security_group_id = module.vpc.sg_app_id
   service_name      = "order"
+  ami_id   = var.ami_id
 }

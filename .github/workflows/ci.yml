@@ -90,10 +90,25 @@ jobs:
 
       - name: Deploy via SSM Run Command
         run: |
+          IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+          
+          PARAMS=$(cat <<EOF
+          {"commands":[
+            "dnf install -y docker",
+            "systemctl start docker",
+            "systemctl enable docker",
+            "docker pull ${IMAGE_TAG}",
+            "docker stop hello-world 2>/dev/null || true",
+            "docker rm hello-world 2>/dev/null || true",
+            "docker run -d --name hello-world --restart always -p 80:80 ${IMAGE_TAG}"
+          ]}
+          EOF
+          )
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ steps.get_instance.outputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["dnf install -y docker","systemctl start docker","systemctl enable docker","docker pull ${{ needs.build-and-push.outputs.image_tag }}","docker stop hello-world 2>/dev/null || true","docker rm hello-world 2>/dev/null || true","docker run -d --name hello-world --restart always -p 80:80 ${{ needs.build-and-push.outputs.image_tag }}"]}' \
+            --parameters "$PARAMS" \
             --region eu-central-1 \
             --query "Command.CommandId" \
             --output text)

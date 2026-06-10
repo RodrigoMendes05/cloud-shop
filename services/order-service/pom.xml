@@ -16,7 +16,7 @@
     <artifactId>order-service</artifactId>
     <version>1.0.0</version>
     <name>Order Service</name>
-    <description>Microservice for order management with Kafka and OpenFeign</description>
+    <description>Microservice for order management with SQS and OpenFeign</description>
     
     <properties>
         <java.version>21</java.version>
@@ -24,6 +24,7 @@
         <springdoc.version>2.6.0</springdoc.version>
         <micrometer.version>1.14.0</micrometer.version>
         <mockito.version>5.14.2</mockito.version>
+        <aws.sdk.version>2.26.27</aws.sdk.version>
     </properties>
     
     <dependencyManagement>
@@ -32,6 +33,13 @@
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>
                 <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -51,10 +59,17 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
         
-        <!-- H2 Database -->
+        <!-- H2 Database (dev/test) -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- PostgreSQL -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
         
@@ -70,10 +85,16 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
         
-        <!-- Kafka -->
+        <!-- AWS SDK v2 — SQS -->
         <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sqs</artifactId>
+        </dependency>
+
+        <!-- AWS SDK v2 — STS (necessário para OIDC/instance profile) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
         </dependency>
         
         <!-- OpenFeign -->
@@ -88,6 +109,12 @@
             <artifactId>lombok</artifactId>
             <version>1.18.42</version>
             <optional>true</optional>
+        </dependency>
+
+        <!-- Jackson para serializar eventos em JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         
         <!-- SpringDoc OpenAPI (Swagger) -->
@@ -116,24 +143,6 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
-        </dependency>
-        
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
         </dependency>
     </dependencies>
     
@@ -198,7 +207,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>${jacoco.argLine} -Dnet.bytebuddy.experimental=true --enable-native-access=ALL-UNNAMED -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Xshare:off</argLine>
+                    <argLine>${jacoco.argLine} -Dnet.bytebuddy.experimental=true --enable-native-access=ALL-UNNAMED -Xshare:off</argLine>
                 </configuration>
             </plugin>
             <plugin>
@@ -216,4 +225,3 @@
         </plugins>
     </build>
 </project>
-

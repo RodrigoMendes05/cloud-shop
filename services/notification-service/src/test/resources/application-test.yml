@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: notification-service-test
+
+aws:
+  region: eu-central-1
+  sqs:
+    queue-url: disabled   # não faz chamadas reais em testes

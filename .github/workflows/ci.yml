@@ -28,6 +28,9 @@ jobs:
           - service: order-service
             port: 8083
             ec2_tag: order
+          - service: notification-service
+            port: 8084
+            ec2_tag: notification
 
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +75,9 @@ jobs:
           - service: order-service
             port: 8083
             ec2_tag: order
+          - service: notification-service
+            port: 8084
+            ec2_tag: notification
 
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +87,16 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Resolve SQS queue URL
+        id: sqs
+        run: |
+          QUEUE_URL=$(aws sqs get-queue-url \
+            --queue-name shop-dev-orders \
+            --region eu-central-1 \
+            --query QueueUrl --output text)
+          echo "queue_url=$QUEUE_URL" >> $GITHUB_OUTPUT
+          echo "SQS queue: $QUEUE_URL"
 
       - name: Get instance ID for ${{ matrix.ec2_tag }}
         id: get_instance
@@ -133,14 +149,24 @@ jobs:
           PORT="${{ matrix.port }}"
           SERVICE="${{ matrix.service }}"
           DB_URL="jdbc:postgresql://${{ secrets.RDS_ENDPOINT }}/shopdb"
+          SQS_URL="${{ steps.sqs.outputs.queue_url }}"
 
-          # Construir env vars específicos por serviço
+          # Variáveis de ambiente específicas por serviço
           EXTRA_ENV=""
           if [ "$SERVICE" = "order-service" ]; then
-            EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082"
+            EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082 -e SQS_QUEUE_URL=${SQS_URL}"
+          fi
+          if [ "$SERVICE" = "notification-service" ]; then
+            EXTRA_ENV="-e SQS_QUEUE_URL=${SQS_URL}"
           fi
           if [ "$SERVICE" = "api-gateway" ]; then
             EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082 -e ORDER_SERVICE_URL=http://${{ steps.get_ips.outputs.order_ip }}:8083"
+          fi
+
+          # Serviços sem DB não precisam de SPRING_DATASOURCE_*
+          DB_ENV=""
+          if [ "$SERVICE" != "notification-service" ]; then
+            DB_ENV="-e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser -e SPRING_DATASOURCE_PASSWORD=${{ secrets.RDS_PASSWORD }}"
           fi
 
           COMMAND_ID=$(aws ssm send-command \
@@ -153,8 +179,8 @@ jobs:
               \"docker pull ${IMAGE}\",
               \"docker stop ${SERVICE} 2>/dev/null || true\",
               \"docker rm ${SERVICE} 2>/dev/null || true\",
-              \"docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser -e SPRING_DATASOURCE_PASSWORD=${{ secrets.RDS_PASSWORD }} ${EXTRA_ENV} ${IMAGE}\"
-            ]}" \
+              \"docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e AWS_REGION=eu-central-1 ${DB_ENV} ${EXTRA_ENV} ${IMAGE}\"
+            ]}\" \
             --region eu-central-1 \
             --query "Command.CommandId" \
             --output text)

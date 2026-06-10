@@ -67,6 +67,8 @@ services:
       SPRING_DATASOURCE_PASSWORD: ShopDev2024!
       USER_SERVICE_URL: http://user-service:8081
       PRODUCT_SERVICE_URL: http://product-service:8082
+      # SQS_QUEUE_URL não definido → SqsPublisher usa "disabled" por defeito
+      # Para testar com SQS real localmente: adiciona SQS_QUEUE_URL=<url> aqui
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +76,21 @@ services:
         condition: service_started
       product-service:
         condition: service_started
+    networks:
+      - shop-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    container_name: shop-notification-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      # SQS_QUEUE_URL não definido → consumidor desactivado localmente
+      # Para testar com SQS real: adiciona SQS_QUEUE_URL=<url> aqui
+    depends_on:
+      - order-service
     networks:
       - shop-network
 

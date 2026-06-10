@@ -87,6 +87,7 @@ resource "aws_route_table_association" "private" {
 }
 
 # --- Security Group: Web tier (api-gateway) ---
+# Porta 22 removida — acesso exclusivamente via AWS SSM (Day 8)
 resource "aws_security_group" "web" {
   name        = "${local.name_prefix}-sg-web"
   description = "Security group for public-facing services"
@@ -108,14 +109,6 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    description = "SSH for Ansible"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -129,6 +122,8 @@ resource "aws_security_group" "web" {
 }
 
 # --- Security Group: App tier (serviços internos) ---
+# Porta 22 removida — acesso exclusivamente via AWS SSM (Day 8)
+# Ingress permitido apenas do web tier (SG reference, não CIDR)
 resource "aws_security_group" "app" {
   name        = "${local.name_prefix}-sg-app"
   description = "Security group for internal app services"
@@ -142,12 +137,13 @@ resource "aws_security_group" "app" {
     security_groups = [aws_security_group.web.id]
   }
 
+  # Permite comunicação interna entre serviços (ex: order → user, product)
   ingress {
-    description = "SSH for Ansible"
-    from_port   = 22
-    to_port     = 22
+    description = "Inter-service HTTP within app tier"
+    from_port   = 8081
+    to_port     = 8084
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    self        = true
   }
 
   egress {
@@ -163,6 +159,7 @@ resource "aws_security_group" "app" {
 }
 
 # --- Security Group: DB tier ---
+# Ingress apenas do app tier via SG reference — nunca de CIDRs públicos
 resource "aws_security_group" "db" {
   name        = "${local.name_prefix}-sg-db"
   description = "Security group for RDS database"

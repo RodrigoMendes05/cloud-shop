@@ -376,7 +376,8 @@ jobs:
             --arg run   "$RUN_CMD" \
             '{commands: [
               "#!/bin/bash",
-              "dnf install -y docker",
+              "export PATH=$PATH:/usr/bin:/usr/local/bin:/sbin:/usr/sbin",
+              "/usr/bin/dnf install -y docker aws-cli",
               "systemctl start docker",
               "systemctl enable docker",
               $pull,

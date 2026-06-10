@@ -21,5 +21,5 @@ variable "db_password" {
   sensitive   = true
 }
 variable "ami_id" {
-  type    = string
+  type = string
 }

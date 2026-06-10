@@ -32,9 +32,9 @@ resource "aws_iam_role_policy" "gha_ssm_deploy" {
       },
       {
         # GetCommandInvocation precisa de * no resource (não aceita ARN de instância)
-        Sid    = "SSMGetInvocation"
-        Effect = "Allow"
-        Action = ["ssm:GetCommandInvocation"]
+        Sid      = "SSMGetInvocation"
+        Effect   = "Allow"
+        Action   = ["ssm:GetCommandInvocation"]
         Resource = "*"
       }
     ]
@@ -276,9 +276,9 @@ resource "aws_iam_policy" "ec2_app_policy" {
         Resource = "arn:aws:ssm:eu-central-1:311601425081:parameter/shop/*"
       },
       {
-        Sid    = "KMSDecrypt"
-        Effect = "Allow"
-        Action = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Sid      = "KMSDecrypt"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = "arn:aws:kms:eu-central-1:311601425081:alias/aws/ssm"
       }
     ]

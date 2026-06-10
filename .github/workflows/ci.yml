@@ -169,18 +169,31 @@ jobs:
             DB_ENV="-e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser -e SPRING_DATASOURCE_PASSWORD=${{ secrets.RDS_PASSWORD }}"
           fi
 
+          # Construir o comando docker run como string simples (evita problemas de
+          # escaping de aspas dentro do JSON do SSM)
+          DOCKER_CMD="docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e AWS_REGION=eu-central-1 ${DB_ENV} ${EXTRA_ENV} ${IMAGE}"
+
+          # Passar cada comando como elemento do array JSON usando jq
+          # jq garante escaping correto independentemente do conteúdo das variáveis
+          PARAMS=$(jq -n \
+            --arg pull "docker pull ${IMAGE}" \
+            --arg stop "docker stop ${SERVICE} 2>/dev/null || true" \
+            --arg rm   "docker rm ${SERVICE} 2>/dev/null || true" \
+            --arg run  "$DOCKER_CMD" \
+            '{commands: [
+              "dnf install -y docker",
+              "systemctl start docker",
+              "systemctl enable docker",
+              $pull,
+              $stop,
+              $rm,
+              $run
+            ]}')
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ steps.get_instance.outputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"dnf install -y docker\",
-              \"systemctl start docker\",
-              \"systemctl enable docker\",
-              \"docker pull ${IMAGE}\",
-              \"docker stop ${SERVICE} 2>/dev/null || true\",
-              \"docker rm ${SERVICE} 2>/dev/null || true\",
-              \"docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e AWS_REGION=eu-central-1 ${DB_ENV} ${EXTRA_ENV} ${IMAGE}\"
-            ]}\" \
+            --parameters "$PARAMS" \
             --region eu-central-1 \
             --query "Command.CommandId" \
             --output text)

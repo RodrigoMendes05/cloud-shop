@@ -3,16 +3,205 @@ name: CI — Build & Deploy Services
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
+  pull-requests: write   # necessário para comentar o plano no PR
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 1 — Lint Terraform (corre em PR e em push main)
+  # ─────────────────────────────────────────────────────────────────
+  lint:
+    name: Terraform Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: terraform fmt check
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: terraform fmt -check -recursive
+
+      - name: Install tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: tflint init
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: tflint --init
+
+      - name: tflint run
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: tflint --format compact
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 2 — Secret scan (gitleaks) — corre em PR e push main
+  # ─────────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # histórico completo para o gitleaks
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 3 — Terraform Plan (só em pull_request; comenta no PR)
+  # ─────────────────────────────────────────────────────────────────
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [lint, secret-scan]
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: infrastructure/terraform/enviroments/dev
+        # db_password não é aplicado em plan — só precisamos de passar algo
+        # para satisfazer a variável obrigatória; o valor real vem do SSM
+        run: |
+          terraform plan -input=false \
+            -var="db_password=PLACEHOLDER_NOT_APPLIED" \
+            -no-color \
+            -out=tfplan 2>&1 | tee plan_output.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infrastructure/terraform/enviroments/dev/plan_output.txt', 'utf8');
+            const maxLen = 60000;
+            const truncated = plan.length > maxLen
+              ? plan.slice(0, maxLen) + '\n\n... (truncado — ver run completo)'
+              : plan;
+
+            const body = `## Terraform Plan
+
+            <details><summary>Ver output completo</summary>
+
+            \`\`\`hcl
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            > Gerado por commit \`${{ github.sha }}\` em \`${{ github.ref }}\``;
+
+            // Apaga comentários anteriores do bot para não acumular
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const c of comments) {
+              if (c.user.type === 'Bot' && c.body.includes('## Terraform Plan')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outputs.exitcode != '0'
+        run: exit 1
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 4 — Terraform Apply (só em push main, depois de lint+scan)
+  # ─────────────────────────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [lint, secret-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: terraform init -input=false
+
+      - name: Fetch db_password from SSM
+        id: secrets
+        run: |
+          DB_PASS=$(aws ssm get-parameter \
+            --name "/shop/dev/rds/password" \
+            --with-decryption \
+            --query "Parameter.Value" \
+            --output text)
+          # Mascarar na log do Actions
+          echo "::add-mask::$DB_PASS"
+          echo "db_password=$DB_PASS" >> $GITHUB_OUTPUT
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/enviroments/dev
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var="db_password=${{ steps.secrets.outputs.db_password }}"
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 5 — Build & Push Docker images (só em push main)
+  # ─────────────────────────────────────────────────────────────────
   build-and-push:
     name: Build & Push — ${{ matrix.service }}
     runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       matrix:
         include:
@@ -56,10 +245,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 6 — Deploy via SSM (só em push main, após build)
+  # ─────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy — ${{ matrix.service }}
     runs-on: ubuntu-latest
     needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       matrix:
         include:
@@ -96,7 +289,6 @@ jobs:
             --region eu-central-1 \
             --query QueueUrl --output text)
           echo "queue_url=$QUEUE_URL" >> $GITHUB_OUTPUT
-          echo "SQS queue: $QUEUE_URL"
 
       - name: Get instance ID for ${{ matrix.ec2_tag }}
         id: get_instance
@@ -110,7 +302,6 @@ jobs:
             --query "Reservations[0].Instances[0].InstanceId" \
             --output text)
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "Found: $INSTANCE_ID for ${{ matrix.ec2_tag }}"
 
       - name: Wait for SSM agent
         run: |
@@ -127,31 +318,26 @@ jobs:
       - name: Get internal IPs for service wiring
         id: get_ips
         run: |
-          USER_IP=$(aws ec2 describe-instances \
-            --region eu-central-1 \
-            --filters "Name=tag:Service,Values=user" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
-          PRODUCT_IP=$(aws ec2 describe-instances \
-            --region eu-central-1 \
-            --filters "Name=tag:Service,Values=product" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
-          ORDER_IP=$(aws ec2 describe-instances \
-            --region eu-central-1 \
-            --filters "Name=tag:Service,Values=order" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
-          echo "user_ip=$USER_IP" >> $GITHUB_OUTPUT
-          echo "product_ip=$PRODUCT_IP" >> $GITHUB_OUTPUT
-          echo "order_ip=$ORDER_IP" >> $GITHUB_OUTPUT
+          for svc in user product order; do
+            IP=$(aws ec2 describe-instances \
+              --region eu-central-1 \
+              --filters "Name=tag:Service,Values=$svc" "Name=instance-state-name,Values=running" \
+              --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
+            echo "${svc}_ip=$IP" >> $GITHUB_OUTPUT
+          done
 
       - name: Deploy ${{ matrix.service }} via SSM
         run: |
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/shop-${{ matrix.service }}:${{ github.sha }}"
           PORT="${{ matrix.port }}"
           SERVICE="${{ matrix.service }}"
+          # Endpoint RDS lido de GitHub Secret (não é a password — só o host:porta)
           DB_URL="jdbc:postgresql://${{ secrets.RDS_ENDPOINT }}/shopdb"
           SQS_URL="${{ steps.sqs.outputs.queue_url }}"
+          # Nome do parâmetro SSM que guarda a password — a EC2 vai buscá-lo em runtime
+          SSM_PARAM_NAME="/shop/dev/rds/password"
 
-          # Variáveis de ambiente específicas por serviço
+          # Variáveis específicas por serviço
           EXTRA_ENV=""
           if [ "$SERVICE" = "order-service" ]; then
             EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082 -e SQS_QUEUE_URL=${SQS_URL}"
@@ -163,23 +349,31 @@ jobs:
             EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082 -e ORDER_SERVICE_URL=http://${{ steps.get_ips.outputs.order_ip }}:8083"
           fi
 
-          # Serviços sem DB não precisam de SPRING_DATASOURCE_*
+          # Serviços com DB: a EC2 lê a password do SSM em runtime via aws cli
+          # e passa-a como variável de ambiente ao container — nunca viaja pelo pipeline
           DB_ENV=""
-          if [ "$SERVICE" != "notification-service" ]; then
-            DB_ENV="-e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser -e SPRING_DATASOURCE_PASSWORD=${{ secrets.RDS_PASSWORD }}"
+          if [ "$SERVICE" != "notification-service" ] && [ "$SERVICE" != "api-gateway" ]; then
+            DB_ENV="-e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser"
+            # O comando SSM vai buscar a password ao SSM Parameter Store localmente na EC2
+            FETCH_PASS="DB_PASS=\$(aws ssm get-parameter --name ${SSM_PARAM_NAME} --with-decryption --region eu-central-1 --query Parameter.Value --output text)"
+            DB_ENV_PASS="-e SPRING_DATASOURCE_PASSWORD=\$DB_PASS"
           fi
 
-          # Construir o comando docker run como string simples (evita problemas de
-          # escaping de aspas dentro do JSON do SSM)
-          DOCKER_CMD="docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e AWS_REGION=eu-central-1 ${DB_ENV} ${EXTRA_ENV} ${IMAGE}"
+          # Construir o docker run
+          DOCKER_CMD="docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e AWS_REGION=eu-central-1 ${DB_ENV} ${DB_ENV_PASS:-} ${EXTRA_ENV} ${IMAGE}"
 
-          # Passar cada comando como elemento do array JSON usando jq
-          # jq garante escaping correto independentemente do conteúdo das variáveis
+          # Se o serviço precisa de DB, prepend o fetch da password
+          if [ -n "${FETCH_PASS:-}" ]; then
+            RUN_CMD="${FETCH_PASS} && ${DOCKER_CMD}"
+          else
+            RUN_CMD="${DOCKER_CMD}"
+          fi
+
           PARAMS=$(jq -n \
-            --arg pull "docker pull ${IMAGE}" \
-            --arg stop "docker stop ${SERVICE} 2>/dev/null || true" \
-            --arg rm   "docker rm ${SERVICE} 2>/dev/null || true" \
-            --arg run  "$DOCKER_CMD" \
+            --arg pull  "docker pull ${IMAGE}" \
+            --arg stop  "docker stop ${SERVICE} 2>/dev/null || true" \
+            --arg rm    "docker rm ${SERVICE} 2>/dev/null || true" \
+            --arg run   "$RUN_CMD" \
             '{commands: [
               "dnf install -y docker",
               "systemctl start docker",

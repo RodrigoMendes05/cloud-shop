@@ -1,4 +1,4 @@
-name: CI — Build & Deploy Hello World
+name: CI — Build & Deploy Services
 
 on:
   push:
@@ -11,12 +11,29 @@ permissions:
 
 jobs:
   build-and-push:
-    name: Build & Push Docker Image
+    name: Build & Push — ${{ matrix.service }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: api-gateway
+            port: 8080
+            ec2_tag: gateway
+          - service: user-service
+            port: 8081
+            ec2_tag: user
+          - service: product-service
+            port: 8082
+            ec2_tag: product
+          - service: order-service
+            port: 8083
+            ec2_tag: order
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -24,23 +41,40 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v5
         with:
-          context: ./services/hello-world
+          context: ./services/${{ matrix.service }}
           push: true
+          platforms: linux/amd64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/shop-hello-world:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/shop-hello-world:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/shop-${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/shop-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy:
-    name: Deploy via SSM
+    name: Deploy — ${{ matrix.service }}
     runs-on: ubuntu-latest
     needs: build-and-push
+    strategy:
+      matrix:
+        include:
+          - service: api-gateway
+            port: 8080
+            ec2_tag: gateway
+          - service: user-service
+            port: 8081
+            ec2_tag: user
+          - service: product-service
+            port: 8082
+            ec2_tag: product
+          - service: order-service
+            port: 8083
+            ec2_tag: order
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -48,40 +82,66 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Get gateway instance ID
+      - name: Get instance ID for ${{ matrix.ec2_tag }}
         id: get_instance
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
             --region eu-central-1 \
             --filters \
               "Name=tag:Project,Values=shop" \
-              "Name=tag:Service,Values=gateway" \
+              "Name=tag:Service,Values=${{ matrix.ec2_tag }}" \
               "Name=instance-state-name,Values=running" \
             --query "Reservations[0].Instances[0].InstanceId" \
             --output text)
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "Found instance: $INSTANCE_ID"
+          echo "Found: $INSTANCE_ID for ${{ matrix.ec2_tag }}"
 
-      - name: Wait for SSM agent to be ready
+      - name: Wait for SSM agent
         run: |
-          echo "Waiting for SSM agent on ${{ steps.get_instance.outputs.instance_id }}..."
           for i in $(seq 1 12); do
             STATUS=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=${{ steps.get_instance.outputs.instance_id }}" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || echo "None")
-            echo "Attempt $i: SSM status = $STATUS"
-            if [ "$STATUS" = "Online" ]; then
-              echo "SSM agent is online!"
-              break
-            fi
+            echo "Attempt $i: SSM = $STATUS"
+            [ "$STATUS" = "Online" ] && break
             sleep 10
           done
 
-      - name: Deploy via SSM Run Command
+      - name: Get internal IPs for service wiring
+        id: get_ips
         run: |
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/shop-hello-world:${{ github.sha }}"
-          echo "Deploying image: $IMAGE_TAG"
+          USER_IP=$(aws ec2 describe-instances \
+            --region eu-central-1 \
+            --filters "Name=tag:Service,Values=user" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
+          PRODUCT_IP=$(aws ec2 describe-instances \
+            --region eu-central-1 \
+            --filters "Name=tag:Service,Values=product" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
+          ORDER_IP=$(aws ec2 describe-instances \
+            --region eu-central-1 \
+            --filters "Name=tag:Service,Values=order" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PrivateIpAddress" --output text)
+          echo "user_ip=$USER_IP" >> $GITHUB_OUTPUT
+          echo "product_ip=$PRODUCT_IP" >> $GITHUB_OUTPUT
+          echo "order_ip=$ORDER_IP" >> $GITHUB_OUTPUT
+
+      - name: Deploy ${{ matrix.service }} via SSM
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/shop-${{ matrix.service }}:${{ github.sha }}"
+          PORT="${{ matrix.port }}"
+          SERVICE="${{ matrix.service }}"
+          DB_URL="jdbc:postgresql://${{ secrets.RDS_ENDPOINT }}/shopdb"
+
+          # Construir env vars específicos por serviço
+          EXTRA_ENV=""
+          if [ "$SERVICE" = "order-service" ]; then
+            EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082"
+          fi
+          if [ "$SERVICE" = "api-gateway" ]; then
+            EXTRA_ENV="-e USER_SERVICE_URL=http://${{ steps.get_ips.outputs.user_ip }}:8081 -e PRODUCT_SERVICE_URL=http://${{ steps.get_ips.outputs.product_ip }}:8082 -e ORDER_SERVICE_URL=http://${{ steps.get_ips.outputs.order_ip }}:8083"
+          fi
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ steps.get_instance.outputs.instance_id }}" \
@@ -90,36 +150,29 @@ jobs:
               \"dnf install -y docker\",
               \"systemctl start docker\",
               \"systemctl enable docker\",
-              \"docker pull ${IMAGE_TAG}\",
-              \"docker stop hello-world 2>/dev/null || true\",
-              \"docker rm hello-world 2>/dev/null || true\",
-              \"docker run -d --name hello-world --restart always -p 80:80 ${IMAGE_TAG}\"
+              \"docker pull ${IMAGE}\",
+              \"docker stop ${SERVICE} 2>/dev/null || true\",
+              \"docker rm ${SERVICE} 2>/dev/null || true\",
+              \"docker run -d --name ${SERVICE} --restart always -p ${PORT}:${PORT} -e SPRING_PROFILES_ACTIVE=docker -e SPRING_DATASOURCE_URL=${DB_URL} -e SPRING_DATASOURCE_USERNAME=shopuser -e SPRING_DATASOURCE_PASSWORD=${{ secrets.RDS_PASSWORD }} ${EXTRA_ENV} ${IMAGE}\"
             ]}" \
             --region eu-central-1 \
             --query "Command.CommandId" \
             --output text)
-
-          echo "Command ID: $COMMAND_ID"
 
           for i in $(seq 1 18); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "${{ steps.get_instance.outputs.instance_id }}" \
               --region eu-central-1 \
-              --query "Status" \
-              --output text 2>/dev/null || echo "Pending")
-            echo "Attempt $i: Command status = $STATUS"
-            if [ "$STATUS" = "Success" ]; then
-              echo "Deploy successful!"
-              break
-            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ]; then
-              echo "Deploy failed with status: $STATUS"
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "Attempt $i: $STATUS"
+            [ "$STATUS" = "Success" ] && break
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ]; then
               aws ssm get-command-invocation \
                 --command-id "$COMMAND_ID" \
                 --instance-id "${{ steps.get_instance.outputs.instance_id }}" \
                 --region eu-central-1 \
-                --query "StandardErrorContent" \
-                --output text
+                --query "StandardErrorContent" --output text
               exit 1
             fi
             sleep 10

@@ -21,6 +21,6 @@ variable "db_password" {
   sensitive   = true
 }
 variable "ami_id" {
-  type = string
-  default = "ami-0e04bcbe83a83792e"  # Amazon Linux 2023 eu-central-1
+  type    = string
+  default = "ami-0e04bcbe83a83792e" # Amazon Linux 2023 eu-central-1
 }

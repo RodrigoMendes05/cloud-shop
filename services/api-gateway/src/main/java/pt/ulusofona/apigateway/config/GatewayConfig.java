@@ -4,6 +4,7 @@ import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 
 /**
  * Configuration class for Spring Cloud Gateway routes.
@@ -34,58 +35,30 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class GatewayConfig {
 
-    /**
-     * Creates and configures the RouteLocator bean for API Gateway routing.
-     * 
-     * <p>This method defines the routing rules for the gateway. Each route
-     * specifies:
-     * <ul>
-     *   <li>A unique route ID</li>
-     *   <li>A path pattern to match</li>
-     *   <li>A destination URI to forward requests to</li>
-     * </ul>
-     * 
-     * <p>The gateway will:
-     * <ol>
-     *   <li>Match incoming requests against the path patterns</li>
-     *   <li>Forward matching requests to the corresponding backend service</li>
-     *   <li>Return the response from the backend service to the client</li>
-     * </ol>
-     * 
-     * <p>Example routing:
-     * <ul>
-     *   <li>Client request: GET http://localhost:8080/api/users/1</li>
-     *   <li>Gateway forwards to: GET http://localhost:8081/users/1</li>
-     *   <li>Note: The /api prefix is removed when forwarding</li>
-     * </ul>
-     * 
-     * @param builder RouteLocatorBuilder for constructing routes
-     * @return RouteLocator containing all configured routes
-     * @apiNote When Docker Compose is implemented, update URIs to use service names:
-     *          - http://user-service:8081 (instead of http://localhost:8081)
-     *          - http://product-service:8082 (instead of http://localhost:8082)
-     */
+    @Value("${services.user.url:http://user-service:8081}")
+    private String userServiceUrl;
+
+    @Value("${services.product.url:http://product-service:8082}")
+    private String productServiceUrl;
+
+    @Value("${services.order.url:http://order-service:8083}")
+    private String orderServiceUrl;
+
     @Bean
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
         return builder.routes()
-                // User Service routes
-                // Routes all requests matching /api/users/** to the User Service
                 .route("user-service", r -> r
                         .path("/api/users/**")
-                        .uri("http://localhost:8081"))
-                
-                // Product Service routes
-                // Routes all requests matching /api/products/** to the Product Service
+                        .filters(f -> f.stripPrefix(1))
+                        .uri(userServiceUrl))
                 .route("product-service", r -> r
                         .path("/api/products/**")
-                        .uri("http://localhost:8082"))
-                
-                // Order Service routes
-                // Routes all requests matching /api/orders/** to the Order Service
+                        .filters(f -> f.stripPrefix(1))
+                        .uri(productServiceUrl))
                 .route("order-service", r -> r
                         .path("/api/orders/**")
-                        .uri("http://localhost:8083"))
-                
+                        .filters(f -> f.stripPrefix(1))
+                        .uri(orderServiceUrl))
                 .build();
     }
 }

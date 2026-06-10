@@ -9,6 +9,7 @@ import pt.ulusofona.productservice.event.OrderCreatedEvent;
 import pt.ulusofona.productservice.event.OrderItemEvent;
 import pt.ulusofona.productservice.model.Product;
 import pt.ulusofona.productservice.repository.ProductRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 /**
  * Kafka event consumer for order-related events.
@@ -29,6 +30,7 @@ import pt.ulusofona.productservice.repository.ProductRepository;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "spring.kafka.enabled", havingValue = "true", matchIfMissing = false)
 public class OrderEventConsumer {
 
     private final ProductRepository productRepository;

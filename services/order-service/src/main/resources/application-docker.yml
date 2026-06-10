@@ -1,0 +1,20 @@
+spring:
+  h2:
+    console:
+      enabled: false
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/shopdb}
+    driver-class-name: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:shopuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:ShopDev2024!}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+services:
+  user:
+    url: ${USER_SERVICE_URL:http://user-service:8081}
+  product:
+    url: ${PRODUCT_SERVICE_URL:http://product-service:8082}

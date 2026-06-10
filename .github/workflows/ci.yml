@@ -375,6 +375,7 @@ jobs:
             --arg rm    "docker rm ${SERVICE} 2>/dev/null || true" \
             --arg run   "$RUN_CMD" \
             '{commands: [
+              "#!/bin/bash",
               "dnf install -y docker",
               "systemctl start docker",
               "systemctl enable docker",

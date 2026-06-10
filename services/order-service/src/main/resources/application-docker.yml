@@ -13,6 +13,13 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+aws:
+  region: ${AWS_REGION:eu-central-1}
+  sqs:
+    # Injectado pelo CI como variável de ambiente
+    queue-url: ${SQS_QUEUE_URL}
+
 services:
   user:
     url: ${USER_SERVICE_URL:http://user-service:8081}

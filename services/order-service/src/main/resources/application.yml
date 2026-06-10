@@ -4,18 +4,18 @@ server:
 spring:
   application:
     name: order-service
-  
+
   datasource:
     url: jdbc:h2:mem:orderdb
     driver-class-name: org.h2.Driver
     username: sa
-    password: 
-  
+    password:
+
   h2:
     console:
       enabled: true
       path: /h2-console
-  
+
   jpa:
     open-in-view: false
     hibernate:
@@ -24,20 +24,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
-  
-  kafka:
-    bootstrap-servers: localhost:9092
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-      acks: all
-    consumer:
-      group-id: order-service-group
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: "*"
-        spring.json.type.mapping: orderCreated:pt.ulusofona.orderservice.event.OrderCreatedEvent,orderStatusChanged:pt.ulusofona.orderservice.event.OrderStatusChangedEvent
+
+# AWS / SQS — disabled by default in local dev (sem AWS credentials locais)
+# Activado no profile docker via application-docker.yml
+aws:
+  region: eu-central-1
+  sqs:
+    queue-url: disabled   # "disabled" faz o SqsPublisher saltar o envio
 
 # Feign Client Configuration
 feign:
@@ -48,7 +41,7 @@ feign:
         readTimeout: 5000
         loggerLevel: basic
 
-# Actuator Configuration
+# Actuator
 management:
   endpoints:
     web:
@@ -57,10 +50,6 @@ management:
   endpoint:
     health:
       show-details: always
-  metrics:
-    export:
-      prometheus:
-        enabled: true
 
 springdoc:
   api-docs:
@@ -68,15 +57,6 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     enabled: true
-    tags-sorter: alpha
-    operations-sorter: alpha
-  info:
-    title: Order Service API
-    description: Microservice for order management with Kafka and OpenFeign
-    version: 1.0.0
-    contact:
-      name: Cloud Computing Course
-      email: support@example.com
 
 # Service URLs (for Feign clients)
 services:
@@ -84,4 +64,3 @@ services:
     url: http://localhost:8081
   product:
     url: http://localhost:8082
-
